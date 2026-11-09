@@ -7,7 +7,8 @@ optimality, safety compliance, and adaptability").
   Proposed    = weather-aware A* driven by the ML speed model
 
 For a set of voyages it computes, for each method:
-  * Route optimality      : distance (km), travel time (h)
+  * Route optimality      : distance (km), travel time (h, ML speed model
+                            estimate for the vessel, both methods)
   * Computational effic.  : cells explored, runtime (s)
   * Safety compliance     : min distance to coast on route (km) vs 22 km
   * Adaptability          : max / mean wave height experienced (m)
@@ -53,8 +54,16 @@ def run(scenario="rough", vessel_name="General Cargo"):
     mult = ML.build_multiplier_grid(grid, weather, V.get(vessel_name), model)
     dist_field = np.load(C.GRID_FILE)["dist_to_coast_km"]
 
-    router_trad = R.Router(grid)                       # Dijkstra
-    router_prop = R.Router(grid, weather=weather, mult_dir=mult)  # A* + ML
+    # Both routers estimate travel time with the same ML speed model, so
+    # trad_h / prop_h are comparable; only the search objective differs.
+    # Both obey the vessel's depth constraint; only A* uses the soft
+    # coastal-proximity preference (Dijkstra stays pure shortest distance).
+    ves = V.get(vessel_name)
+    timing = {"speed_kn": ves.service_speed_kn, "time_mult": mult,
+              "min_depth_m": V.required_depth_m(ves)}
+    router_trad = R.Router(grid, **timing)                         # Dijkstra
+    router_prop = R.Router(grid, weather=weather, mult_dir=mult,   # A* + ML
+                           coast_penalty=C.COAST_PENALTY, **timing)
 
     rows = []
     for origin, dest in VOYAGES:

@@ -4,21 +4,29 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Nautilus · Optimal Ship Routing</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Control panel -->
-  <aside class="panel panel-left glass">
-    <header class="brand">
-      <div class="brand-mark">🧭</div>
-      <div>
-        <h1>Nautilus</h1>
-        <p>Optimal Ship Routing · India</p>
-      </div>
-    </header>
+  <!-- Top bar (all modes): brand, mode, and in the lab the voyage + panel dock -->
+  <header class="topbar glass" id="topbar">
+    <div class="brand-mini" title="Nautilus · Optimal Ship Routing · India"><span>🧭</span><b>Nautilus</b></div>
+    <div class="segmented compact" id="mode">
+      <button data-val="route" class="active">Route planning</button>
+      <button data-val="sim">Voyage replay</button>
+      <button data-val="lab">Simulation lab</button>
+    </div>
+    <div class="topbar-voyage mode-lab hidden" id="lab-title">No voyage yet</div>
+    <span class="chip sim-chip mode-lab hidden" id="sim-chip"
+      title="Simulated voyage: synthetic weather and an ML speed model trained on synthetic data. Hours are model estimates, not real-world performance.">Simulated</span>
+    <nav class="dock mode-lab hidden" id="lab-dock" aria-label="Panels"></nav>
+  </header>
 
+  <!-- Route planning / replay control panel -->
+  <aside class="panel panel-left glass mode-route mode-sim" id="side-panel">
+    <div id="voyage-fields" class="voyage-fields">
     <div class="field">
       <label>Vessel</label>
       <select id="vessel"></select>
@@ -44,8 +52,9 @@
         <button data-val="live">● Live</button>
       </div>
     </div>
+    </div>
 
-    <div class="field">
+    <div class="field mode-route">
       <label>Algorithms</label>
       <div class="toggles">
         <label class="chk"><input type="checkbox" id="use-dijkstra" checked />
@@ -59,15 +68,164 @@
       </div>
     </div>
 
-    <button id="go" class="btn-primary">🚢 Find optimal route</button>
+    <div class="field mode-sim hidden">
+      <label>Weather change during voyage</label>
+      <select id="sim-scenario"></select>
+      <small class="hint">Simulated, deterministic weather changes on top of
+        the Typical/Rough sea state. Live weather is not used.</small>
+    </div>
+
+    <details class="mode-sim mode-lab hidden settings" id="reroute-settings">
+      <summary>Rerouting settings</summary>
+      <div class="row">
+        <div class="field">
+          <label>Cooldown (steps)</label>
+          <input type="number" id="cfg-cooldown" min="0" step="1" />
+        </div>
+        <div class="field">
+          <label>Min. gain (%)</label>
+          <input type="number" id="cfg-gain" min="0" step="0.5" />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Wave trigger (m)</label>
+          <input type="number" id="cfg-swh" min="0" step="0.5" />
+        </div>
+        <div class="field mode-lab hidden">
+          <label>Route-change penalty</label>
+          <input type="number" id="cfg-dev" min="0" step="0.05" />
+        </div>
+      </div>
+      <small class="hint" id="cfg-hint"></small>
+    </details>
+
+    <button id="go" class="btn-primary mode-route">🚢 Find optimal route</button>
+    <button id="simulate" class="btn-primary mode-sim hidden">⛈ Run simulated voyage</button>
     <div id="status" class="status"></div>
   </aside>
 
   <!-- Results panel -->
   <section class="panel panel-right glass hidden" id="results">
-    <h2>Route comparison</h2>
+    <h2 id="results-title">Route comparison</h2>
     <div id="cards" class="cards"></div>
     <p id="verdict" class="verdict"></p>
+    <div id="sim-extra" class="sim-extra hidden"></div>
+  </section>
+
+  <!-- Simulation lab: floating panels (drag by the header, collapse, hide to the dock) -->
+  <section class="fpanel glass mode-lab hidden" id="fp-setup" data-title="Voyage setup" data-short="Setup" data-pos="left:16,top:72">
+    <header class="fp-head"><span class="fp-title">Voyage setup</span>
+      <button class="fp-btn fp-collapse" title="Collapse">−</button>
+      <button class="fp-btn fp-hide" title="Hide (reopen from the top bar)">×</button></header>
+    <div class="fp-body">
+      <div id="lab-voyage-slot"></div>
+      <div class="field">
+        <label>Scenario</label>
+        <select id="lab-preset"></select>
+        <small class="hint" id="lab-preset-info"></small>
+      </div>
+      <label class="chk"><input type="checkbox" id="lab-rerouting" checked />
+        <span>Automatic rerouting</span></label>
+      <div id="lab-settings-slot"></div>
+      <small class="hint" id="lab-constraints"></small>
+      <button id="lab-create" class="btn-primary">⚓ New voyage</button>
+    </div>
+  </section>
+
+  <section class="fpanel glass mode-lab hidden" id="fp-sim" data-title="Simulation" data-short="Run" data-pos="left:16,bottom:16">
+    <header class="fp-head"><span class="fp-title">Simulation</span>
+      <span class="chip" id="lab-state-chip">No voyage</span>
+      <button class="fp-btn fp-collapse" title="Collapse">−</button>
+      <button class="fp-btn fp-hide" title="Hide (reopen from the top bar)">×</button></header>
+    <div class="fp-body">
+      <div class="lab-buttons">
+        <button id="lab-start" class="lab-btn primary" title="Start or resume automatic stepping">▶ Start</button>
+        <button id="lab-pause" class="lab-btn" title="Pause after the current step">⏸ Pause</button>
+        <button id="lab-step" class="lab-btn" title="Advance one step">⏭ Step</button>
+        <button id="lab-reset" class="lab-btn" title="Back to the start: discards progress, route changes and all manual weather">↺ Reset</button>
+      </div>
+      <div class="lab-speed-row">
+        <span class="mini-label">Speed</span>
+        <select id="lab-speed" title="Pause between automatic steps">
+          <option value="1500">Slow</option>
+          <option value="600" selected>1×</option>
+          <option value="150">Fast</option>
+        </select>
+        <div class="lab-progress"><div id="lab-progress-bar"></div></div>
+      </div>
+      <div id="lab-status" class="lab-status">Set up a voyage, then Start.</div>
+    </div>
+  </section>
+
+  <section class="fpanel glass mode-lab hidden" id="fp-weather" data-title="Weather" data-pos="right:70,top:72">
+    <header class="fp-head"><span class="fp-title">Weather</span>
+      <span id="lab-weather-badge" class="badge-pill hidden">pending</span>
+      <button class="fp-btn fp-collapse" title="Collapse">−</button>
+      <button class="fp-btn fp-hide" title="Hide (reopen from the top bar)">×</button></header>
+    <div class="fp-body">
+      <div class="w-add">
+        <button id="w-add-storm" class="lab-btn" title="Then click the map">＋ Storm</button>
+        <button id="w-add-calm" class="lab-btn" title="Then click the map">＋ Calm</button>
+      </div>
+      <div id="w-place-hint" class="place-hint hidden">Click the map to place it · <a href="#" id="w-place-cancel">cancel</a></div>
+      <div id="lab-dist-list" class="dist-list"></div>
+      <div id="w-editor" class="w-editor hidden">
+        <div class="w-row"><label for="w-delta">Wave change</label>
+          <input type="range" id="w-delta" min="-6" max="8" step="0.5" /><output id="w-delta-v"></output></div>
+        <div class="w-row"><label for="w-radius">Size</label>
+          <input type="range" id="w-radius" min="25" max="800" step="25" /><output id="w-radius-v"></output></div>
+        <details class="w-adv"><summary>Position</summary>
+          <div class="row">
+            <div class="field"><label>Lat °N</label><input type="number" id="dist-lat" step="0.1" /></div>
+            <div class="field"><label>Lon °E</label><input type="number" id="dist-lon" step="0.1" /></div>
+          </div>
+          <button id="w-move" class="lab-btn small">Move</button>
+        </details>
+        <button id="dist-remove" class="lab-btn small">Remove</button>
+      </div>
+      <div class="w-actions">
+        <button id="weather-apply" class="lab-btn primary" disabled>Apply</button>
+        <button id="weather-discard" class="lab-btn" disabled>Discard</button>
+      </div>
+      <div id="w-schedule" class="hint hidden"></div>
+      <button id="schedule-cancel" class="linkish hidden">Cancel scheduled updates</button>
+    </div>
+  </section>
+
+  <section class="fpanel glass mode-lab hidden" id="fp-events" data-title="Route changes" data-short="Changes" data-pos="right:70,bottom:150" data-collapsed="1">
+    <header class="fp-head"><span class="fp-title">Route changes</span>
+      <span id="lab-ev-count" class="chip hidden"></span>
+      <button class="fp-btn fp-collapse" title="Collapse">−</button>
+      <button class="fp-btn fp-hide" title="Hide (reopen from the top bar)">×</button></header>
+    <div class="fp-body">
+      <div id="lab-ev-current" class="ev-current"></div>
+      <div id="lab-reroutes" class="r-chips"></div>
+      <div id="lab-outcome" class="ev-outcome hidden"></div>
+      <details id="ev-log" class="ev-log"><summary>Full log</summary>
+        <label class="chk inline"><input type="checkbox" id="lab-routine" /><span>routine steps</span></label>
+        <div id="lab-timeline" class="timeline"></div>
+      </details>
+    </div>
+  </section>
+
+  <section class="fpanel glass mode-lab hidden" id="fp-key" data-title="Map key" data-short="Key" data-pos="right:70,bottom:16" data-collapsed="1">
+    <header class="fp-head"><span class="fp-title">Map key</span>
+      <button class="fp-btn fp-collapse" title="Collapse">−</button>
+      <button class="fp-btn fp-hide" title="Hide (reopen from the top bar)">×</button></header>
+    <div class="fp-body">
+      <div class="key-waves"><span class="mini-label">Wave height</span>
+        <div class="legend-bar"></div>
+        <div class="legend-scale"><span>calm</span><span id="lab-legend-max">m</span></div></div>
+      <div class="map-key">
+        <span><i class="k-active"></i>current plan</span>
+        <span><i class="k-track"></i>sailed</span>
+        <span><i class="k-initial"></i>initial plan</span>
+        <span><i class="k-prev"></i>replaced plan</span>
+      </div>
+      <label class="chk inline-row"><input type="checkbox" id="lab-waves" checked /><span>Wave overlay</span></label>
+      <label class="chk inline-row"><input type="checkbox" id="lab-safety" /><span>Too shallow for this vessel <em>(red)</em></span></label>
+    </div>
   </section>
 
   <!-- Wave legend -->
